@@ -1,0 +1,138 @@
+name: Build
+
+on:
+  push:
+    tags: ["v*"]  # pushing a v* tag builds and publishes a GitHub Release
+  workflow_dispatch:  # manual "Run workflow" button in the Actions tab
+
+permissions:
+  contents: write  # needed to attach binaries to releases on v* tags
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # - os: ubuntu-22.04  # older glibc = runs on more distros
+          #   artifact: Pixa-linux-x86_64
+          - os: windows-latest
+            artifact: Pixa-windows-x86_64
+          # - os: macos-14
+          #   artifact: Pixa-macos-arm64
+          # - os: macos-15-intel
+          #   artifact: Pixa-macos-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install Qt runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+      - run: pip install . pyinstaller
+      - run: pyinstaller --noconfirm packaging/pixa.spec
+
+      - name: Smoke test
+        shell: bash
+        timeout-minutes: 5
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PIXA_SMOKE_SCREENSHOT: smoke.png
+        run: |
+          case "$RUNNER_OS" in
+            Linux)   exe=./dist/Pixa ;;
+            Windows) exe=./dist/Pixa/Pixa.exe; unset QT_QPA_PLATFORM ;;
+            macOS)   exe=./dist/Pixa.app/Contents/MacOS/Pixa ;;
+          esac
+          "$exe" --smoke-test || true  # the app quits by itself
+          test -s smoke.png && echo "packaged app started and rendered"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-screenshot
+          path: smoke.png
+      - name: Read version
+        shell: bash
+        run: echo "PIXA_VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")" >> "$GITHUB_ENV"
+      - name: Check the tag matches the version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF_NAME" != "v$PIXA_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $PIXA_VERSION in pyproject.toml"
+            exit 1
+          fi
+      - name: Archive (Linux)
+        if: runner.os == 'Linux'
+        run: tar czf "${{ matrix.artifact }}-$PIXA_VERSION.tar.gz" -C dist Pixa
+      - name: Disk image (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir dmg
+          ditto dist/Pixa.app dmg/Pixa.app
+          ln -s /Applications dmg/Applications  # drag-to-install target
+          # hdiutil occasionally fails with "Resource busy" on CI runners; retry.
+          for attempt in 1 2 3 4 5; do
+            hdiutil create -volname Pixa -srcfolder dmg -fs HFS+ -format UDZO -ov \
+              "${{ matrix.artifact }}-$PIXA_VERSION.dmg" && break
+            [ "$attempt" = 5 ] && exit 1
+            sleep 5
+          done
+      - name: Installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco upgrade innosetup -y --no-progress  # installs it when missing
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:PIXA_VERSION" "/DOutputName=${{ matrix.artifact }}-$env:PIXA_VERSION-setup" packaging\pixa.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # Pixa's updater checks the download against this before running it.
+          $setup = "${{ matrix.artifact }}-$env:PIXA_VERSION-setup.exe"
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+          [IO.File]::WriteAllText("$PWD\$setup.sha256", "$hash  $setup`n")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-${{ env.PIXA_VERSION }}  # the downloaded .zip's name
+          path: ${{ matrix.artifact }}[.-]*
+      - name: Release notes
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        # This version's section of CHANGELOG.md; Pixa shows it in its update dialog.
+        run: |
+          python - <<'PY'
+          import os, re
+          version = os.environ["PIXA_VERSION"]
+          text = open("CHANGELOG.md", encoding="utf-8").read()
+          match = re.search(rf"^## {re.escape(version)}\s*$(.*?)(?=^## |\Z)", text, re.M | re.S)
+          notes = match.group(1).strip() if match else f"Pixa {version}"
+          open("release-notes.md", "w", encoding="utf-8").write(notes + "\n")
+          PY
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: release-notes.md
+          files: ${{ matrix.artifact }}[.-]*
+      # The installed app looks for updates in the public Turac0/Pixa-releases repository
+      # (this one may be private). RELEASES_TOKEN is a fine-grained token with
+      # "Contents: Read and write" on Turac0/Pixa-releases, saved as an Actions secret here.
+      - name: Check the releases token
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        env:
+          RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+        run: |
+          if [ -z "$RELEASES_TOKEN" ]; then
+            echo "::error::Add a RELEASES_TOKEN secret (see build.yml) to publish updates to Turac0/Pixa-releases"
+            exit 1
+          fi
+      - name: Publish update
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: Turac0/Pixa-releases
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          name: Pixa ${{ env.PIXA_VERSION }}
+          body_path: release-notes.md
+          files: ${{ matrix.artifact }}[.-]*
