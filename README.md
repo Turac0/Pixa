@@ -76,14 +76,12 @@ PyInstaller can't cross-compile, so build on each OS. The GitHub Actions workflo
 
 ### Publishing an update
 
-Installed copies of Pixa look for new versions in the public [Turac0/Pixa-releases](https://github.com/Turac0/Pixa-releases) repository, so this one can stay private. To release:
+Installed copies of Pixa look for new versions in this repository's [latest release](https://github.com/Turac0/Pixa/releases/latest). To release:
 
 1. Bump the version (`pyproject.toml`, `src/pixa/__init__.py`, `packaging/pixa.spec`) and describe the changes under `## <version>` in `CHANGELOG.md`.
 2. Merge to `main`, then tag it: `git tag v0.6.0 && git push origin v0.6.0`. The tag must match the version.
 
-CI then publishes the Windows installer, its `.sha256` checksum and that changelog section as a release in Pixa-releases. Pixa shows the notes in its update dialog and checks the download against the checksum before installing.
-
-This needs a one-time setup: create a [fine-grained token](https://github.com/settings/personal-access-tokens/new) with access to Turac0/Pixa-releases only and **Contents: Read and write**, and save it in this repository under **Settings → Secrets and variables → Actions** as `RELEASES_TOKEN`. Pixa-releases must be public.
+CI then publishes the Windows installer, its `.sha256` checksum and that changelog section as a GitHub release. Pixa shows the notes in its update dialog and checks the download against the checksum before installing.
 
 The Windows build is a folder rather than a single self-extracting `.exe`, because those trip antivirus tools. To build the installer yourself, install [Inno Setup](https://jrsoftware.org/isinfo.php) and run `iscc /DAppVersion=0.1.0 packaging\pixa.iss` after PyInstaller.
 
@@ -148,3 +146,7 @@ Changing only the size, colour or underline keeps the original font. Picking ano
 - Scanned (image-only) PDFs contain no text to edit, and OCR isn't included.
 - A few images can't be moved: images stored inline in the page or inside form objects. Pixa says so when that happens. The same goes for changing their layer.
 - Changing the layer of a text box redraws its text, the same way moving it does. Editing or moving a text box later puts it on top again.
+
+## License
+
+Pixa is free software under the [GNU Affero General Public License v3.0 or later](LICENSE). It is built on [PyMuPDF](https://pymupdf.readthedocs.io/) (AGPL-3.0) and Qt for Python ([PySide6](https://doc.qt.io/qtforpython-6/), LGPL-3.0).

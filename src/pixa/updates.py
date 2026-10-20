@@ -1,8 +1,8 @@
 """Checking for and downloading new versions of Pixa (Qt-free).
 
-Releases are published to a public repository that holds only the installers (the source
-repository may be private). Each release is tagged ``v<version>`` and carries the Windows
-installer plus a ``<installer>.sha256`` file; its notes are shown to the user.
+Releases are published on Pixa's own GitHub repository. Each release is tagged
+``v<version>`` and carries the Windows installer plus a ``<installer>.sha256`` file; its
+notes are shown to the user.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pixa import __version__
 from pixa.i18n import tr
 
-RELEASES_REPO = "Turac0/Pixa-releases"
+RELEASES_REPO = "Turac0/Pixa"
 LATEST_URL = f"https://api.github.com/repos/{RELEASES_REPO}/releases/latest"
 RELEASES_PAGE = f"https://github.com/{RELEASES_REPO}/releases/latest"
 TIMEOUT = 15

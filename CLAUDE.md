@@ -24,7 +24,7 @@ Known test problems that predate current work, so don't chase them as regression
 - `src/pixa/ui/main_window.py`: menus, actions, file handling, drag and drop, and the language switch.
 - `src/pixa/ui/page_view.py`: the page canvas (editing, selection, tools). `inspector.py` is the right-hand panel, `thumbnails.py` the page sidebar.
 - `src/pixa/ui/print_dialog.py`, `print_preview.py`, `printing.py`: Pixa's own print dialog and preview. `winprint.py` opens the Windows printer Properties dialog through ctypes.
-- `src/pixa/updates.py` (network, no Qt) and `src/pixa/ui/updater.py` (UI): update checks against the public Turac0/Pixa-releases repo.
+- `src/pixa/updates.py` (network, no Qt) and `src/pixa/ui/updater.py` (UI): update checks against this repo's latest GitHub release.
 - `src/pixa/fonts.py`, `pdffont.py`, `layers.py`: font matching, encoding text into existing PDF fonts, and content-stream layer order.
 
 ## Translations (i18n)
@@ -55,5 +55,5 @@ Tests construct `MainWindow` without calling `i18n.set_language`, so they run in
   - **Local:** commit straight to the branch that is checked out. Don't create branches or open PRs unless asked.
   - **Cloud:** work on a new branch and open a pull request **into `dev`**, never into `main` and never straight onto `dev`. If `gh` isn't available, give the user the compare link (https://github.com/Turac0/Pixa/compare/dev...<branch>).
 - `dev` is merged into `main` for releases (see below), by the user. Don't merge it yourself. The `gh` CLI isn't installed on the user's Mac.
-- Release: bump the version in `pyproject.toml`, `src/pixa/__init__.py` and `packaging/pixa.spec`, and add a `## <version>` section to `CHANGELOG.md`. CI copies that section into the release notes. Merge to `main`, then push the tag `v<version>`. CI publishes the Windows installer and its checksum to Turac0/Pixa-releases (needs the `RELEASES_TOKEN` secret).
+- Release: bump the version in `pyproject.toml`, `src/pixa/__init__.py` and `packaging/pixa.spec`, and add a `## <version>` section to `CHANGELOG.md`. CI copies that section into the release notes. Merge to `main`, then push the tag `v<version>`. CI publishes the Windows installer, its checksum and the notes as a GitHub release here.
 - Changelog entries are written for users: a bold lead-in, then what changed and where to find it.
