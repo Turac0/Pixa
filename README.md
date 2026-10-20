@@ -18,6 +18,7 @@ A clean, modern PDF editor that runs entirely on your machine. It works on macOS
 - Unlimited-feeling **undo/redo** (last 50 steps), continuous scrolling, zoom and fit-to-width.
 - **Safe saving**: the first time you press Save on a file you opened, Pixa asks whether to overwrite the original or save a copy. You can turn this off with "Don't ask again" and back on under File → Ask Before Overwriting Originals.
 - Light and dark themes (by default it follows the OS), recent files, and support for password-protected PDFs.
+- **Automatic updates**: Pixa checks for a new version when it starts and shows what's new. On Windows, **Install and Restart** downloads the installer, verifies its checksum and installs it. **Help → Check for Updates…** looks right away, and **Help → Check for Updates Automatically** turns the check off.
 - **English and Swedish.** Pixa uses your system's language when it has it, and English otherwise. Choose another under **View → Language**; the window switches right away and keeps your document and its undo history.
 
 ## Keyboard shortcuts
@@ -72,7 +73,9 @@ pyinstaller --noconfirm packaging/pixa.spec
 | Linux | `dist/Pixa` (single file) |
 | macOS | `dist/Pixa.app` |
 
-PyInstaller can't cross-compile, so build on each OS. The GitHub Actions workflow in `.github/workflows/build.yml` does this for you. When you push a `v*` tag (or start it manually from the Actions tab) it builds a Windows installer (`Pixa-windows-x86_64-<version>-setup.exe`), a macOS disk image (`Pixa-macos-arm64-<version>.dmg`) and a Linux tarball, each named after the version in `pyproject.toml` (for example `Pixa-windows-x86_64-0.5.2-setup.exe`). You can download them from the run's **Artifacts**, whose zip files carry the version too. A tag also attaches them to a GitHub release.
+PyInstaller can't cross-compile, so build on each OS. The GitHub Actions workflow in `.github/workflows/build.yml` does this for you. When you push a `v*` tag (or start it manually from the Actions tab) it builds a Windows installer named after the version in `pyproject.toml` (for example `Pixa-windows-x86_64-0.5.3-setup.exe`). You can download it from the run's **Artifacts**, whose zip files carry the version too. A tag also attaches it to a GitHub release. The macOS disk image (`Pixa-macos-arm64-<version>.dmg`) and Linux tarball jobs are in the workflow but commented out; uncomment them in the build matrix to build those too.
+
+The workflow builds with a read-only token. Only the final release job can write to the repository, and it runs no installed packages. Every action is pinned to a commit, and Dependabot (`.github/dependabot.yml`) proposes updates to those pins.
 
 ### Publishing an update
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.3
+
+### Improved
+
+- **Updates now come straight from Pixa's own project page.** Pixa's source code is public now, so **Help → Check for Updates…** and the automatic check look for new versions at [github.com/Turac0/Pixa](https://github.com/Turac0/Pixa/releases), the same place you can download them by hand. Downloads are still checked against their checksum before they're installed.
+- **Safer releases.** The installers are built and published in separate, locked-down steps, so the files your copy of Pixa downloads can't be altered along the way.
+- **Works with PyMuPDF 2**, the newest version of the PDF engine Pixa is built on. Its large optional add-ons are left out, so the download doesn't grow.
+
+### Other
+
+- **Pixa is free software** under the GNU Affero General Public License v3.0 or later. The license is in the `LICENSE` file and at the end of the README.
+
 ## 0.5.2
 
 ### New
