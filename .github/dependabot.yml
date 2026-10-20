@@ -1,0 +1,12 @@
+# Proposes updates to the commit-pinned actions in .github/workflows, so pinning
+# them doesn't mean falling behind on fixes.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    target-branch: dev
+    groups:
+      actions:
+        patterns: ["*"]
