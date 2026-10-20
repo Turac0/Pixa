@@ -21,7 +21,7 @@ def release_json(tag="v9.0.0", checksum=True):
         assets.append({"name": f"{NAME}.sha256",
                        "browser_download_url": f"https://example.com/{NAME}.sha256"})
     return {"tag_name": tag, "body": "### New\n\n- Things", "assets": assets,
-            "html_url": "https://github.com/Turac0/Pixa-releases/releases/tag/" + tag}
+            "html_url": "https://github.com/Turac0/Pixa/releases/tag/" + tag}
 
 
 class FakeResponse(io.BytesIO):
