@@ -27,10 +27,10 @@ jobs:
           #   artifact: Pixa-macos-x86_64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7.0.0
         with:
           python-version: "3.12"
       - name: Install Qt runtime libraries (Linux)
@@ -53,7 +53,7 @@ jobs:
           esac
           "$exe" --smoke-test || true  # the app quits by itself
           test -s smoke.png && echo "packaged app started and rendered"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: ${{ matrix.artifact }}-screenshot
           path: smoke.png
@@ -95,7 +95,7 @@ jobs:
           $setup = "${{ matrix.artifact }}-$env:PIXA_VERSION-setup.exe"
           $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
           [IO.File]::WriteAllText("$PWD\$setup.sha256", "$hash  $setup`n")
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: ${{ matrix.artifact }}-${{ env.PIXA_VERSION }}  # the downloaded .zip's name
           path: ${{ matrix.artifact }}[.-]*
@@ -107,12 +107,12 @@ jobs:
     permissions:
       contents: write  # creates the release and attaches the installers
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09  # v5.1.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
         with:
           persist-credentials: false
       - name: Read version
         run: echo "PIXA_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")" >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: Pixa-*-${{ env.PIXA_VERSION }}  # the packages, not the screenshots
           path: release
@@ -130,7 +130,7 @@ jobs:
           PY
       # Installed copies of Pixa look for updates in this repository's latest release.
       - name: Attach to release
-        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v3.0.3
         with:
           name: Pixa ${{ env.PIXA_VERSION }}
           body_path: release-notes.md
