@@ -877,7 +877,8 @@ def _text_under_image(rotation=0):
     pdf = fitz.open()
     page = pdf.new_page()
     page.insert_text((72, 140), "Hello", fontsize=40, fontname="hebo")
-    page.insert_image(fitz.Rect(60, 90, 260, 160), stream=_png_bytes())
+    page.insert_image(fitz.Rect(60, 90, 260, 160), stream=_png_bytes(),
+                      keep_proportion=False)
     page.set_rotation(rotation)
     return PdfDocument.from_bytes(pdf.tobytes()), fitz.Rect(60, 90, 260, 160)
 
@@ -933,7 +934,7 @@ def test_layering_splits_text_shared_by_several_paragraphs():
         f"2 0 0 2 0 0 cm BT /{font} 10 Tf 36 350 Td (Top line here) Tj "
         "0 -150 Td (Bottom line) Tj ( more) Tj ET").encode())
     page = pdf.reload_page(page)
-    page.insert_image(fitz.Rect(60, 420, 300, 560), stream=_png_bytes())
+    page.insert_image(fitz.Rect(60, 420, 300, 560), stream=_png_bytes(), keep_proportion=False)
     doc = PdfDocument.from_bytes(pdf.tobytes())
     top, bottom = doc.text_blocks(0)
     words = doc.doc[0].get_text("words")

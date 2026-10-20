@@ -11,6 +11,9 @@ ROOT = os.path.dirname(HERE)
 EXCLUDES = [
     # Optional extras PyMuPDF imports when present; Pixa doesn't need them.
     "tkinter", "numpy", "PIL", "lxml", "matplotlib", "pandas", "fontTools", "IPython",
+    # PyMuPDF 2 installs its layout analysis (an ONNX model) and pymupdf4llm and tries to
+    # import them; they add well over 100 MB and Pixa never uses them.
+    "pymupdf.layout", "pymupdf4llm", "onnxruntime", "networkx",
     "PySide6.QtWebEngineCore", "PySide6.QtWebEngineWidgets", "PySide6.QtWebEngineQuick",
     "PySide6.QtWebChannel", "PySide6.QtWebSockets", "PySide6.QtQml", "PySide6.QtQuick",
     "PySide6.QtQuickWidgets", "PySide6.Qt3DCore", "PySide6.Qt3DRender", "PySide6.QtCharts",
