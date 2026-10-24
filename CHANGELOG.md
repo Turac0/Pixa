@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.4
+
+### New
+
+- **Select several things at once.** With the Select tool, Shift-click (or Ctrl-click; ⌘-click on a Mac) to add text, images, highlights and boxes to the selection, or drag across an empty spot of a page to select everything the rectangle touches. Drag any of them, or use the arrow keys, to move them all together. Delete removes them all. Either way it's a single step to undo.
+- **Pinch to zoom.** Zooming with two fingers on a touchpad now works, on a Mac and on Windows.
+
+### Improved
+
+- **Zoom stays where you're looking.** Ctrl+scroll and pinching zoom towards the mouse pointer. The zoom buttons and shortcuts zoom towards the middle of the window instead of jumping to the top left.
+- **The Select tool picks single lines of text**, like the Edit text tool, instead of sometimes grabbing a whole block of text at once.
+- **Enter starts a new line** when you add or edit text. Click outside the text when you're done (or press Ctrl+Enter, ⌘+Enter on a Mac); Esc still cancels.
+
 ## 0.5.3
 
 ### Improved

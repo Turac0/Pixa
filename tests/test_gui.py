@@ -13,7 +13,7 @@ from PySide6.QtGui import QKeySequence  # noqa: E402
 from PySide6.QtTest import QTest  # noqa: E402
 from PySide6.QtWidgets import QApplication, QDialog  # noqa: E402
 
-from pixa.document import BoxStyle  # noqa: E402
+from pixa.document import BoxStyle, TextStyle  # noqa: E402
 from pixa.ui.main_window import MainWindow  # noqa: E402
 from pixa.ui.page_view import Tool  # noqa: E402
 
@@ -68,8 +68,9 @@ def test_edit_existing_text(window, app):
     editor = window.view._editor
     assert editor is not None and editor.toPlainText() == "Page 1 title"
     QTest.keyClicks(editor, "Edited heading")
-    QTest.keyClick(editor, Qt.Key.Key_Return)
+    click_page(window, 0, 500, 700)  # clicking outside the text finishes
     pump(app)
+    assert not window.view.is_editing
     text = window.doc.doc[0].get_text()
     assert "Edited heading" in text and "Page 1 title" not in text
     assert window.doc.dirty and "•" in window.windowTitle()
@@ -92,7 +93,7 @@ def test_add_text_uses_add_style(window, app):
     click_page(window, 1, 100, 400)
     pump(app)
     QTest.keyClicks(window.view._editor, "Hello Pixa")
-    QTest.keyClick(window.view._editor, Qt.Key.Key_Return)
+    QTest.keyClick(window.view._editor, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
     pump(app)
     added = [ln for ln in window.doc.text_lines(1) if ln.text == "Hello Pixa"]
     assert added and added[0].style.size == pytest.approx(12)
@@ -282,7 +283,7 @@ def test_editor_survives_style_changes_in_inspector(window, app):
     QTest.mouseClick(insp.underline, Qt.MouseButton.LeftButton)
     pump(app, 30)
     assert window.view.is_editing and editor.hasFocus()
-    QTest.keyClick(editor, Qt.Key.Key_Return)
+    QTest.keyClick(editor, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
     pump(app)
     edited = next(ln for ln in window.doc.text_lines(0) if ln.text == "Typed on the page")
     assert edited.style.size == pytest.approx(18)
@@ -575,7 +576,7 @@ def test_text_typed_on_a_box_is_on_top_and_selectable(window, app):
     click_page(window, 1, 120, 430)
     pump(app)
     QTest.keyClicks(v._editor, "On the box")
-    QTest.keyClick(v._editor, Qt.Key.Key_Return)
+    QTest.keyClick(v._editor, Qt.Key.Key_Return, Qt.KeyboardModifier.ControlModifier)
     pump(app)
     line = next(ln for ln in window.doc.text_lines(1) if ln.text == "On the box")
     image = window.doc.doc[1].get_pixmap(clip=line.bbox)
@@ -1072,3 +1073,144 @@ def test_check_for_updates(window, app, monkeypatch):
 
     window.a_auto_update.trigger()
     assert window.settings.value("check_updates") == "false"
+
+
+def test_enter_adds_a_line_while_editing(window, app):
+    window.set_tool(Tool.EDIT_TEXT)
+    line = window.doc.text_lines(0)[1]
+    click_page(window, 0, line.bbox.x0 + 5, (line.bbox.y0 + line.bbox.y1) / 2)
+    pump(app)
+    editor = window.view._editor
+    QTest.keyClick(editor, Qt.Key.Key_End)
+    QTest.keyClick(editor, Qt.Key.Key_Return)
+    QTest.keyClicks(editor, "jumps over")
+    pump(app)
+    assert window.view.is_editing  # Enter didn't finish
+    assert editor.toPlainText() == "The quick brown fox\njumps over"
+    click_page(window, 0, 500, 700)
+    pump(app)
+    texts = [ln.text for ln in window.doc.text_lines(0)]
+    assert "The quick brown fox" in texts and "jumps over" in texts
+    second = next(ln for ln in window.doc.text_lines(0) if ln.text == "jumps over")
+    assert second.bbox.x0 == pytest.approx(line.bbox.x0, abs=1)
+    assert second.origin.y == pytest.approx(line.origin.y + 1.25 * 12, abs=0.5)  # next row
+
+
+def test_select_picks_one_line_of_a_paragraph(window, app):
+    window.doc.add_text(1, fitz.Point(100, 400), "First line\nSecond line",
+                        TextStyle(size=14))
+    window.set_tool(Tool.SELECT)
+    v = window.view
+    second = next(ln for ln in window.doc.text_lines(1) if ln.text == "Second line")
+    click_page(window, 1, second.bbox.x0 + 5, (second.bbox.y0 + second.bbox.y1) / 2)
+    pump(app)
+    assert v.selected_text is not None and v.selected_text.text == "Second line"
+    QTest.keyClick(v, Qt.Key.Key_Right, Qt.KeyboardModifier.ShiftModifier)
+    pump(app)
+    lines = {ln.text: ln for ln in window.doc.text_lines(1)}
+    assert lines["Second line"].bbox.x0 == pytest.approx(second.bbox.x0 + 10, abs=0.5)
+    assert lines["First line"].bbox.x0 == pytest.approx(100, abs=1)  # stayed put
+    assert v.selected_text.text == "Second line"
+
+
+def test_select_several_and_move_them_together(window, app):
+    window.set_tool(Tool.SELECT)
+    v = window.view
+    title, body = window.doc.text_lines(0)[:2]
+    (image,) = window.doc.images(0)
+    click_page(window, 0, title.bbox.x0 + 5, (title.bbox.y0 + title.bbox.y1) / 2)
+    pump(app)
+    for x, y in ((body.bbox.x0 + 5, (body.bbox.y0 + body.bbox.y1) / 2), (350, 350)):
+        pos = _page_pos(v, 0, x, y)
+        QTest.mouseClick(v.viewport(), Qt.MouseButton.LeftButton,
+                         Qt.KeyboardModifier.ShiftModifier, pos)
+        pump(app)
+    assert len(v.selection) == 3 and v.selected is None
+    undo_steps = len(window.doc._undo)
+    start = _page_pos(v, 0, body.bbox.x0 + 5, (body.bbox.y0 + body.bbox.y1) / 2)
+    _drag(v, start, start + QPoint(round(40 * v.zoom), round(60 * v.zoom)))
+    pump(app)
+    assert len(window.doc._undo) == undo_steps + 1  # one undo step for all
+    lines = {ln.text: ln for ln in window.doc.text_lines(0)}
+    assert lines["Page 1 title"].bbox.x0 == pytest.approx(title.bbox.x0 + 40, abs=2)
+    assert lines["The quick brown fox"].bbox.y0 == pytest.approx(body.bbox.y0 + 60, abs=2)
+    (moved,) = window.doc.images(0)
+    assert moved.bbox.x0 == pytest.approx(image.bbox.x0 + 40, abs=2)
+    assert moved.bbox.y0 == pytest.approx(image.bbox.y0 + 60, abs=2)
+    assert len(v.selection) == 3  # still selected
+    QTest.keyClick(v, Qt.Key.Key_Down)
+    pump(app)
+    assert window.doc.images(0)[0].bbox.y0 == pytest.approx(moved.bbox.y0 + 1, abs=0.5)
+    window.delete_selection()
+    pump(app)
+    assert window.doc.images(0) == [] and window.doc.text_lines(0) == []
+    window.doc.undo()
+    assert len(window.doc.text_lines(0)) == 2 and len(window.doc.images(0)) == 1
+
+
+def test_drag_on_an_empty_spot_selects_what_it_touches(window, app):
+    window.set_tool(Tool.SELECT)
+    v = window.view
+    _drag(v, _page_pos(v, 0, 60, 70), _page_pos(v, 0, 250, 140))
+    pump(app)
+    assert sorted(it.text for it in v.selection) == ["Page 1 title", "The quick brown fox"]
+
+
+def test_zoom_keeps_the_middle_in_place(window, app):
+    v = window.view
+    v.set_zoom(1.0)
+    pump(app)
+    middle = QPointF(v.viewport().rect().center())
+    spot = v._page_spot(v.mapToScene(middle.toPoint()))
+    v.zoom_in()
+    pump(app)
+    again = v._page_spot(v.mapToScene(middle.toPoint()))
+    assert again[0] == spot[0]
+    assert again[1] == pytest.approx(spot[1], abs=2)
+    assert again[2] == pytest.approx(spot[2], abs=2)
+
+
+def test_wheel_and_pinch_zoom_towards_the_pointer(window, app):
+    from PySide6.QtGui import QWheelEvent
+
+    v = window.view
+    v.set_zoom(2.0)  # wider than the window, so it can keep the pointer's spot sideways too
+    pump(app)
+    pointer = QPointF(v.viewport().width() * 0.8, v.viewport().height() * 0.7)
+    spot = v._page_spot(v.mapToScene(pointer.toPoint()))
+    wheel = QWheelEvent(pointer, v.viewport().mapToGlobal(pointer), QPoint(), QPoint(0, 120),
+                        Qt.MouseButton.NoButton, Qt.KeyboardModifier.ControlModifier,
+                        Qt.ScrollPhase.NoScrollPhase, False)
+    QApplication.sendEvent(v.viewport(), wheel)
+    pump(app)
+    assert v.zoom == pytest.approx(2.4)
+    again = v._page_spot(v.mapToScene(pointer.toPoint()))
+    assert (again[1], again[2]) == pytest.approx((spot[1], spot[2]), abs=2)
+    v._pinch(1.25, pointer)  # what a touchpad pinch does, step by step
+    v._pinch(1.2, pointer)
+    assert v.zoom == pytest.approx(2.4) and v.shown_zoom == pytest.approx(3.6)
+    again = v._page_spot(v.mapToScene(pointer.toPoint()))  # already while pinching
+    assert (again[1], again[2]) == pytest.approx((spot[1], spot[2]), abs=2)
+    v._finish_pinch()
+    pump(app)
+    assert v.zoom == pytest.approx(3.6) and v.transform().isIdentity()
+    again = v._page_spot(v.mapToScene(pointer.toPoint()))
+    assert (again[1], again[2]) == pytest.approx((spot[1], spot[2]), abs=2)
+
+
+def test_touchpad_pinch_zooms_once_per_step(window, app):
+    from PySide6.QtGui import QNativeGestureEvent, QPointingDevice
+
+    v = window.view
+    v.set_zoom(1.0)
+    pump(app)
+    pos = QPointF(300, 300)
+
+    def gesture(kind, value):
+        return QNativeGestureEvent(kind, QPointingDevice.primaryPointingDevice(), 2, pos, pos,
+                                   v.viewport().mapToGlobal(pos), value, QPointF(), 0)
+
+    QApplication.sendEvent(v.viewport(), gesture(Qt.NativeGestureType.ZoomNativeGesture, 0.5))
+    assert v.shown_zoom == pytest.approx(1.5)  # the view doesn't get it a second time
+    QApplication.sendEvent(v.viewport(), gesture(Qt.NativeGestureType.EndNativeGesture, 0))
+    assert v.zoom == pytest.approx(1.5) and v.transform().isIdentity()

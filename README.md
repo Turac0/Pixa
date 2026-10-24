@@ -4,9 +4,10 @@ A clean, modern PDF editor that runs entirely on your machine. It works on macOS
 
 ## Features
 
-- **Edit existing text**: hover a line to highlight it, click it, type, and press Enter. Pixa keeps the original font whenever it can (see below), and you can change the font, size, bold/italic/underline and colour in the right pane without leaving the text.
-- **Move text boxes**: with the Select tool, click a text box (a paragraph, a heading or text you added) and drag it. Arrow keys nudge it by 1 pt, or 10 pt with Shift. Delete removes it. Mixed fonts and colours inside the box are kept.
-- **Add text** anywhere on a page, with a font family, size, bold/italic and colour. Multi-line text works too (Shift+Enter).
+- **Edit existing text**: hover a line to highlight it, click it, type, and click outside the text when you're done (or press Ctrl+Enter). Enter starts a new line. Pixa keeps the original font whenever it can (see below), and you can change the font, size, bold/italic/underline and colour in the right pane without leaving the text.
+- **Move text**: with the Select tool, click a line of text (the same lines the Edit text tool picks) and drag it. Arrow keys nudge it by 1 pt, or 10 pt with Shift. Delete removes it. Mixed fonts and colours inside the line are kept.
+- **Select several things**: Shift-click (or Ctrl-click) to add text, images, highlights and boxes to the selection, or drag across an empty spot of a page to select everything the rectangle touches. Drag any of them or use the arrow keys to move them all together, and Delete removes them, each as one undo step.
+- **Add text** anywhere on a page, with a font family, size, bold/italic and colour. Enter starts a new line; click outside the text to place it.
 - **Images**: add PNG, JPG, WebP, SVG (kept as sharp vector graphics), icons and more (HEIC and AVIF where your system's Qt can read them), or select any image already on a page. Drag to move it, drag a corner to resize (Shift for free aspect), and drag the round handle to rotate (snaps to 15°, Shift for free). Arrow keys nudge it, the right pane rotates it by 90°, and Delete removes it. Moving an image keeps its quality and its place in front of or behind other content.
 - **Highlight**: drag across text like with a marker, in any colour. Going over text again replaces the earlier highlight instead of darkening it. The highlight snaps to whole words and follows the text over several lines; where there is no text (a scan, a picture) the dragged area is highlighted. Highlights are standard PDF annotations, so other viewers show them too.
 - **Boxes**: drag to draw a rectangle with the border width, border colour and fill you choose (or no fill). Boxes are drawn on the page like text and images, so whatever you place last is on top: a white box hides what is under it, and text added afterwards sits on the box. Click a box with the Select tool to change it: drag it to move it, drag a corner to resize it (Shift keeps the proportions), nudge it with the arrow keys, change its border and fill in the right pane, or delete it. A selected highlight can be recoloured the same way. Your highlight colour and box style are remembered between sessions.
@@ -32,11 +33,13 @@ A clean, modern PDF editor that runs entirely on your machine. It works on macOS
 | Rotate page left / right | Ctrl+[ / Ctrl+] |
 | Move page up / down | Ctrl+Shift+↑ / Ctrl+Shift+↓ |
 | Delete page | Ctrl+Shift+D (or Delete in the sidebar) |
-| Delete selected image, text box, highlight or box | Delete |
-| Nudge selected image or text box | Arrow keys (Shift = 10 pt) |
+| Add to the selection | Shift-click (or Ctrl-click) |
+| Delete selected image, text, highlight or box | Delete |
+| Nudge selected image, text or box | Arrow keys (Shift = 10 pt) |
+| Finish editing text | Click outside it (or Ctrl+Enter) |
 | Bring forward / Send backward | Ctrl+Page Up / Ctrl+Page Down |
 | Bring to front / Send to back | Ctrl+Shift+Page Up / Ctrl+Shift+Page Down |
-| Zoom in / out / fit width | Ctrl++ / Ctrl+- / Ctrl+0 (or Ctrl+scroll) |
+| Zoom in / out / fit width | Ctrl++ / Ctrl+- / Ctrl+0 (or Ctrl+scroll, or pinch on a touchpad) |
 
 On macOS, use ⌘ instead of Ctrl.
 

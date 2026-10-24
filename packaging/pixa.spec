@@ -57,7 +57,7 @@ if sys.platform == "darwin":
         icon=icon,
         bundle_identifier="app.pixa.editor",
         info_plist={
-            "CFBundleShortVersionString": "0.5.3",
+            "CFBundleShortVersionString": "0.5.4",
             "NSHighResolutionCapable": True,
             # Pixa's languages (pixa/locales), so macOS shows its own dialogs in them too.
             "CFBundleLocalizations": ["en", "sv"],

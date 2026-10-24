@@ -7,7 +7,18 @@ from collections import OrderedDict
 from enum import Enum
 
 import pymupdf as fitz
-from PySide6.QtCore import QLineF, QPoint, QPointF, QRectF, QSize, QSizeF, Qt, QTimer, Signal
+from PySide6.QtCore import (
+    QEvent,
+    QLineF,
+    QPoint,
+    QPointF,
+    QRectF,
+    QSize,
+    QSizeF,
+    Qt,
+    QTimer,
+    Signal,
+)
 from PySide6.QtGui import (
     QBrush,
     QColor,
@@ -23,6 +34,7 @@ from PySide6.QtGui import (
     QPen,
     QPixmap,
     QPolygonF,
+    QTransform,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -53,7 +65,7 @@ from pixa.document import (
     TextStyle,
     image_size,
 )
-from pixa.i18n import N_, tr
+from pixa.i18n import N_, ntr, tr
 from pixa.ui import dnd
 
 PAGE_GAP = 24.0
@@ -376,7 +388,10 @@ class ImageTransformer(QGraphicsObject):
 
 
 class InlineEditor(QPlainTextEdit):
-    """Text box overlaid on the page. Enter commits, Shift+Enter adds a line, Esc cancels."""
+    """Text box overlaid on the page. Enter adds a line, Ctrl+Enter commits, Esc cancels.
+
+    Clicking outside it commits too (the view handles clicks on the canvas).
+    """
 
     committed = Signal(str)
     cancelled = Signal()
@@ -428,8 +443,8 @@ class InlineEditor(QPlainTextEdit):
             proxy.resize(size)
 
     def keyPressEvent(self, event: QKeyEvent) -> None:  # noqa: N802
-        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and not (
-            event.modifiers() & Qt.KeyboardModifier.ShiftModifier
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter) and (
+            event.modifiers() & Qt.KeyboardModifier.ControlModifier  # Cmd on macOS
         ):
             self.commit()
             return
@@ -480,7 +495,8 @@ class InlineEditor(QPlainTextEdit):
 class PageView(QGraphicsView):
     currentPageChanged = Signal(int)  # noqa: N815
     zoomChanged = Signal(float)  # noqa: N815
-    selectionChanged = Signal(object)  # ImageInfo | TextBlock | Markup | None  # noqa: N815
+    # ImageInfo | TextBlock | Markup | None, or a list when several are selected
+    selectionChanged = Signal(object)  # noqa: N815
     editingChanged = Signal(object)  # TextStyle | None while an inline editor is open  # noqa: N815
     placementChanged = Signal(bool)  # noqa: N815
     # Files or pages dropped on the pages: (dnd.Dropped, page index, display point)
@@ -522,7 +538,12 @@ class PageView(QGraphicsView):
         self._selection_box = QGraphicsRectItem()
         self._selection_box.setZValue(6)
         self._selection_box.hide()
+        # ``selected`` is the one selected element; with several, it is None and
+        # ``selection`` lists them (each outlined by one of ``_multi_boxes``).
         self.selected: ImageInfo | TextBlock | Markup | None = None
+        self.selection: list[ImageInfo | TextBlock | Markup] = []
+        self._multi_boxes: list[QGraphicsRectItem] = []
+        self._band: dict | None = None  # rubber band being dragged to select
         self._blocks_cache: dict[tuple[int, int], list[TextBlock]] = {}
         self._drag: dict | None = None  # in-progress text box / box drag
         self._draw: dict | None = None  # highlight or box being drawn
@@ -537,6 +558,14 @@ class PageView(QGraphicsView):
         self._transformer_mode = ""
         self._placement_source: str | bytes | None = None
         self._veil: QGraphicsPolygonItem | None = None
+        # Pinch zoom scales the view at once and renders the pages anew when
+        # the fingers rest, so it stays smooth.
+        self._pinch_zoom: float | None = None
+        self._pinch_anchor = QPointF()
+        self._pinch_timer = QTimer(self)
+        self._pinch_timer.setSingleShot(True)
+        self._pinch_timer.setInterval(180)
+        self._pinch_timer.timeout.connect(self._finish_pinch)
         self.verticalScrollBar().valueChanged.connect(self._update_current)
 
     # ---------------------------------------------------------------- setup
@@ -569,6 +598,8 @@ class PageView(QGraphicsView):
         self._blocks_cache.clear()
         self._drag = None
         self._draw = None
+        self._band = None
+        self._multi_boxes = []  # the scene deletes them below
         self._drop_transformer()
         scene = self.scene()
         for item in (self._hover, self._selection_box):
@@ -594,6 +625,7 @@ class PageView(QGraphicsView):
         self._hover.hide()
         self._selection_box.hide()
         self.selected = None
+        self.selection = []
         self.selectionChanged.emit(None)
         scene.setSceneRect(QRectF(-PAGE_GAP, 0, widest + 2 * PAGE_GAP, y))
         self._restore_anchor(old_page, old_frac)
@@ -651,10 +683,15 @@ class PageView(QGraphicsView):
         return image
 
     def _blocks(self, index: int) -> list[TextBlock]:
+        """The text boxes the Select tool picks: one per line, like the Edit text tool."""
         key = (index, self.doc.revision)
         if key not in self._blocks_cache:
-            self._blocks_cache[key] = self.doc.text_blocks(index)
+            self._blocks_cache[key] = self.doc.line_blocks(index)
         return self._blocks_cache[key]
+
+    def _block_at(self, index: int, pt: fitz.Point) -> TextBlock | None:
+        hits = [b for b in self._blocks(index) if pt in b.bbox]
+        return min(hits, key=lambda b: b.bbox.get_area()) if hits else None
 
     def _lines(self, index: int) -> list[TextLine]:
         key = (index, self.doc.revision)
@@ -663,20 +700,70 @@ class PageView(QGraphicsView):
         return self._lines_cache[key]
 
     # ------------------------------------------------------------------ zoom
-    def set_zoom(self, zoom: float, fit: bool = False) -> None:
+    def set_zoom(self, zoom: float, fit: bool = False, anchor: QPointF | None = None) -> None:
+        """Zoom so that the point under ``anchor`` (viewport coordinates; by default
+        the middle of the view) stays where it is."""
         self.fit_width = fit
         new = max(MIN_ZOOM, min(MAX_ZOOM, zoom))
-        if abs(new - self.zoom) < 1e-4 and not fit:
+        if abs(new - self.zoom) < 1e-4 and not fit and self._pinch_zoom is None:
             return
         self.cancel_interactions()
+        if anchor is None:
+            anchor = QPointF(self.viewport().rect().center())
+        spot = self._page_spot(self.mapToScene(anchor.toPoint()))
+        self._pinch_timer.stop()
+        self._pinch_zoom = None
+        self.resetTransform()
         self.zoom = new
         self.rebuild()
+        if spot is not None:
+            index, x, y = spot
+            target = self.pages[index].pos() + QPointF(x * self.zoom, y * self.zoom)
+            off = self.mapFromScene(target) - anchor.toPoint()
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + off.x())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() + off.y())
+
+    def _page_spot(self, scene_pos: QPointF) -> tuple[int, float, float] | None:
+        """The closest page and the point (in display points) a scene position is at."""
+        if not self.pages:
+            return None
+        item = min(self.pages, key=lambda it: 0 if it.mapRectToScene(it.page_rect).contains(
+            scene_pos) else abs(it.mapRectToScene(it.page_rect).center().y() - scene_pos.y()))
+        local = scene_pos - item.pos()
+        return item.index, local.x() / self.zoom, local.y() / self.zoom
+
+    @property
+    def shown_zoom(self) -> float:
+        """The zoom as seen, also while a pinch is under way."""
+        return self._pinch_zoom if self._pinch_zoom is not None else self.zoom
 
     def zoom_in(self) -> None:
-        self.set_zoom(self.zoom * 1.2)
+        self.set_zoom(self.shown_zoom * 1.2)
 
     def zoom_out(self) -> None:
-        self.set_zoom(self.zoom / 1.2)
+        self.set_zoom(self.shown_zoom / 1.2)
+
+    def _pinch(self, factor: float, anchor: QPointF) -> None:
+        """Zoom by ``factor`` around ``anchor`` by scaling the view; the pages are
+        rendered at the new zoom once the gesture pauses."""
+        if not self.pages or factor <= 0:
+            return
+        new = max(MIN_ZOOM, min(MAX_ZOOM, self.shown_zoom * factor))
+        if abs(new - self.shown_zoom) < 1e-4:
+            return
+        before = self.mapToScene(anchor.toPoint())
+        self._pinch_zoom = new
+        self._pinch_anchor = QPointF(anchor)
+        self.setTransform(QTransform.fromScale(new / self.zoom, new / self.zoom))
+        off = self.mapFromScene(before) - anchor.toPoint()
+        self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() + off.x())
+        self.verticalScrollBar().setValue(self.verticalScrollBar().value() + off.y())
+        self.zoomChanged.emit(new)
+        self._pinch_timer.start()
+
+    def _finish_pinch(self) -> None:
+        if self._pinch_zoom is not None:
+            self.set_zoom(self._pinch_zoom, anchor=self._pinch_anchor)
 
     def zoom_fit(self) -> None:
         self.set_zoom(self._fit_zoom(), fit=True)
@@ -691,13 +778,41 @@ class PageView(QGraphicsView):
 
     def wheelEvent(self, event) -> None:  # noqa: N802
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
-            if event.angleDelta().y() > 0:
-                self.zoom_in()
-            elif event.angleDelta().y() < 0:
-                self.zoom_out()
+            # Ctrl+wheel, and pinching on touchpads that send it that way (Windows).
+            delta = event.angleDelta().y()
+            if delta:
+                factor = 1.2 ** (delta / 120)
+                if event.pixelDelta().isNull() and abs(delta) % 120 == 0:
+                    self.set_zoom(self.shown_zoom * factor, anchor=event.position())
+                else:  # small steps from a touchpad or a smooth wheel
+                    self._pinch(factor, event.position())
             event.accept()
             return
         super().wheelEvent(event)
+
+    def _gesture(self, event, receiver: QWidget) -> bool:
+        """Pinch to zoom on touchpads with native gestures (macOS, Wayland)."""
+        if event.type() != QEvent.Type.NativeGesture:
+            return False
+        kind = event.gestureType()
+        if kind == Qt.NativeGestureType.ZoomNativeGesture:
+            pos = event.position()
+            if receiver is not self.viewport():
+                pos = QPointF(self.viewport().mapFrom(receiver, pos.toPoint()))
+            self._pinch(1 + event.value(), pos)
+            event.accept()  # or Qt hands it on to the view as well
+            return True
+        if kind == Qt.NativeGestureType.EndNativeGesture and self._pinch_zoom is not None:
+            self._finish_pinch()
+            event.accept()
+            return True
+        return False
+
+    def viewportEvent(self, event) -> bool:  # noqa: N802
+        return self._gesture(event, self.viewport()) or super().viewportEvent(event)
+
+    def event(self, event) -> bool:
+        return self._gesture(event, self) or super().event(event)
 
     # ------------------------------------------------------------ navigation
     @property
@@ -794,15 +909,25 @@ class PageView(QGraphicsView):
 
     def clear_selection(self) -> None:
         self.selected = None
+        self.selection = []
         self._selection_box.hide()
+        self._clear_multi_boxes()
         if self._transformer_mode in ("edit", "box"):
             self._drop_transformer()
         self.selectionChanged.emit(None)
 
+    def _clear_multi_boxes(self) -> None:
+        for box in self._multi_boxes:
+            if box.scene() is not None:
+                box.scene().removeItem(box)
+        self._multi_boxes = []
+
     def _select(self, item: ImageInfo | TextBlock | Markup) -> None:
         if self._transformer_mode in ("edit", "box"):
             self._drop_transformer()
+        self._clear_multi_boxes()
         self.selected = item
+        self.selection = [item]
         if isinstance(item, ImageInfo) and item.name:
             self._selection_box.hide()
             self._show_image_transformer(item)
@@ -816,6 +941,43 @@ class PageView(QGraphicsView):
             )
             self._selection_box.show()
         self.selectionChanged.emit(item)
+
+    def select_items(self, items: list[ImageInfo | TextBlock | Markup]) -> None:
+        """Select several elements, to move or delete them together."""
+        items = [it for n, it in enumerate(items) if it not in items[:n]]
+        if len(items) < 2:
+            if items:
+                self._select(items[0])
+            else:
+                self.clear_selection()
+            return
+        if self._transformer_mode in ("edit", "box"):
+            self._drop_transformer()
+        self._selection_box.hide()
+        self._clear_multi_boxes()
+        self.selected = None
+        self.selection = items
+        for item in items:
+            box = QGraphicsRectItem(self._scene_rect(item.page, item.bbox).adjusted(-2, -2, 2, 2))
+            box.setPen(self._selection_box.pen())
+            box.setBrush(self._selection_box.brush())
+            box.setZValue(6)
+            self.scene().addItem(box)
+            self._multi_boxes.append(box)
+        self.selectionChanged.emit(list(items))
+        self.message.emit(ntr(
+            "{n} item selected.",
+            "{n} items selected. Drag one of them or use the arrow keys to move them "
+            "together; Delete removes them.", len(items)))
+
+    def _toggle_selected(self, item: ImageInfo | TextBlock | Markup) -> None:
+        """Shift- or Ctrl-click: add an element to the selection, or take it out."""
+        items = list(self.selection)
+        if item in items:
+            items.remove(item)
+        else:
+            items.append(item)
+        self.select_items(items)
 
     def _selectable_at(self, index: int, pt: fitz.Point) -> ImageInfo | TextBlock | Markup | None:
         """Image, text box, highlight or box under a point.
@@ -838,9 +1000,17 @@ class PageView(QGraphicsView):
             hits.append(image)
         return min(hits, key=lambda h: h.bbox.get_area()) if hits else None
 
-    @staticmethod
-    def _movable(target: ImageInfo | TextBlock | Markup | None) -> bool:
-        """Text boxes and boxes can be dragged with the click that selects them."""
+    def _selectables_in(self, index: int, area: fitz.Rect) -> list[ImageInfo | TextBlock | Markup]:
+        """Everything selectable on a page that a rubber band (unrotated) touches."""
+        found: list[ImageInfo | TextBlock | Markup] = [
+            *self._blocks(index), *self.doc.markups(index), *self.doc.images(index)]
+        return [it for it in found if it.bbox.intersects(area)]
+
+    def _movable(self, target: ImageInfo | TextBlock | Markup | None) -> bool:
+        """Text boxes and boxes can be dragged with the click that selects them;
+        anything in a selection of several drags the whole selection."""
+        if len(self.selection) > 1 and target in self.selection:
+            return True
         return isinstance(target, TextBlock) or (
             isinstance(target, Markup) and target.kind == "box")
 
@@ -850,6 +1020,9 @@ class PageView(QGraphicsView):
             return
         if self._draw is not None:
             self._draw_to(self.mapToScene(event.position().toPoint()))
+            return
+        if self._band is not None:
+            self._band_to(self.mapToScene(event.position().toPoint()))
             return
         super().mouseMoveEvent(event)
         if not self.doc or self._editor is not None:
@@ -873,7 +1046,7 @@ class PageView(QGraphicsView):
                 rect = min(hits, key=lambda ln: ln.bbox.get_area()).bbox
         elif self.tool == Tool.SELECT and not self.is_placing:
             target = self._selectable_at(index, pt)
-            if target is not None and target != self.selected:
+            if target is not None and target not in self.selection:
                 rect = target.bbox
             self._set_cursor(
                 Qt.CursorShape.SizeAllCursor if self._movable(target)
@@ -907,7 +1080,10 @@ class PageView(QGraphicsView):
         scene_pos = self.mapToScene(event.position().toPoint())
         t = self._transformer
         grab = t._hit(t.mapFromScene(scene_pos)) if t is not None else None
-        if grab is not None and not (grab == "move" and self._on_selected_box(scene_pos)):
+        adding = bool(event.modifiers() & (Qt.KeyboardModifier.ShiftModifier
+                                           | Qt.KeyboardModifier.ControlModifier))
+        if grab is not None and not (grab == "move" and (
+                self._on_selected_box(scene_pos) or (adding and not self.is_placing))):
             super().mousePressEvent(event)  # the handles take it from here
             return
         if self.is_placing or self._editor is not None:
@@ -942,33 +1118,84 @@ class PageView(QGraphicsView):
         elif self.tool == Tool.SELECT:
             target = self._selectable_at(index, pt)
             if target is None:
-                self.clear_selection()
+                if not adding:
+                    self.clear_selection()
+                self._begin_band(index, scene_pos, adding)
+            elif adding:
+                self._toggle_selected(target)
             else:
-                self._select(target)
+                if target not in self.selection or len(self.selection) < 2:
+                    self._select(target)
                 if self._movable(target):
-                    self._drag = {"start": scene_pos, "block": target, "ghost": None}
+                    self._drag = {"start": scene_pos, "items": list(self.selection),
+                                  "ghosts": None}
             self._hover.hide()
             self.setFocus()
+
+    # ----------------------------------------------------- rubber band select
+    def _begin_band(self, index: int, scene_pos: QPointF, adding: bool) -> None:
+        item = QGraphicsRectItem()
+        pen = QPen(self.accent, 1, Qt.PenStyle.DashLine)
+        pen.setCosmetic(True)
+        item.setPen(pen)
+        fill = QColor(self.accent)
+        fill.setAlpha(24)
+        item.setBrush(fill)
+        item.setZValue(8)
+        item.hide()
+        self.scene().addItem(item)
+        self._band = {"page": index, "start": scene_pos, "item": item,
+                      "keep": list(self.selection) if adding else []}
+
+    def _band_to(self, scene_pos: QPointF) -> None:
+        band = self._band
+        page = self.pages[band["page"]]
+        area = page.mapRectToScene(page.page_rect)  # kept on the page it started on
+        end = QPointF(min(max(scene_pos.x(), area.left()), area.right()),
+                      min(max(scene_pos.y(), area.top()), area.bottom()))
+        band["item"].setRect(QRectF(band["start"], end).normalized())
+        band["item"].show()
+
+    def _finish_band(self) -> None:
+        band, self._band = self._band, None
+        item = band["item"]
+        if item.scene() is not None:
+            item.scene().removeItem(item)
+        rect = item.rect()
+        if not item.isVisible() or rect.width() + rect.height() < 4:
+            return  # a plain click on an empty spot
+        index = band["page"]
+        r = rect.translated(-self.pages[index].pos())
+        z = self.zoom
+        area = self.doc.from_display_rect(
+            index, fitz.Rect(r.left() / z, r.top() / z, r.right() / z, r.bottom() / z))
+        self.select_items(band["keep"] + self._selectables_in(index, area))
 
     # --------------------------------------------- moving text boxes and boxes
     def _drag_to(self, scene_pos: QPointF) -> None:
         drag = self._drag
         offset = scene_pos - drag["start"]
-        if drag["ghost"] is None:
+        if drag["ghosts"] is None:
             if abs(offset.x()) + abs(offset.y()) < 4:  # ignore tiny jitters of a click
                 return
-            drag["ghost"] = self._make_ghost(drag["block"])
+            drag["ghosts"] = [self._make_ghost(item) for item in drag["items"]
+                              if not (isinstance(item, Markup) and item.kind == "highlight")]
             if self._transformer_mode == "box":
                 self._transformer.hide()  # the ghost shows where the box goes
-        rect = self._scene_rect(drag["block"].page, drag["block"].bbox)
-        drag["ghost"].setPos(rect.topLeft() + offset)
-        self._selection_box.setRect(rect.translated(offset).adjusted(-2, -2, 2, 2))
+        for item, ghost in zip((it for it in drag["items"] if not (
+                isinstance(it, Markup) and it.kind == "highlight")), drag["ghosts"], strict=True):
+            ghost.setPos(self._scene_rect(item.page, item.bbox).topLeft() + offset)
+        boxes = self._multi_boxes or [self._selection_box]
+        for item, box in zip(drag["items"], boxes, strict=False):
+            if not (isinstance(item, Markup) and item.kind == "highlight"):
+                rect = self._scene_rect(item.page, item.bbox)
+                box.setRect(rect.translated(offset).adjusted(-2, -2, 2, 2))
 
-    def _make_ghost(self, block: TextBlock | Markup) -> QGraphicsItem:
-        """A picture of the text box, cut from the rendered page, that follows the mouse
+    def _make_ghost(self, block: ImageInfo | TextBlock | Markup) -> QGraphicsItem:
+        """A picture of the element, cut from the rendered page, that follows the mouse
         (for a box: the box itself)."""
         rect = self._scene_rect(block.page, block.bbox)
-        if isinstance(block, Markup):
+        if isinstance(block, Markup) and block.kind == "box":
             ghost = self._box_item(block.style)
             ghost.setRect(QRectF(QPointF(0, 0), rect.size()))
             ghost.setPos(rect.topLeft())
@@ -994,18 +1221,58 @@ class PageView(QGraphicsView):
         if self._draw is not None:
             self._finish_draw()
             return
+        if self._band is not None:
+            self._finish_band()
+            return
         drag, self._drag = self._drag, None
         if drag is None:
             super().mouseReleaseEvent(event)
             return
-        if drag["ghost"] is None:
+        if drag["ghosts"] is None:
             return  # plain click: just a selection
-        self.scene().removeItem(drag["ghost"])
+        for ghost in drag["ghosts"]:
+            self.scene().removeItem(ghost)
         offset = self.mapToScene(event.position().toPoint()) - drag["start"]
-        if self.selected_markup is not None:
-            self.move_selected_markup(offset.x() / self.zoom, offset.y() / self.zoom)
+        dx, dy = offset.x() / self.zoom, offset.y() / self.zoom
+        if len(self.selection) > 1:
+            self.move_selection(dx, dy)
+        elif self.selected_markup is not None:
+            self.move_selected_markup(dx, dy)
         else:
-            self.move_selected_text(offset.x() / self.zoom, offset.y() / self.zoom)
+            self.move_selected_text(dx, dy)
+
+    def move_selection(self, dx: float, dy: float) -> None:
+        """Move all selected elements by (dx, dy) points as seen on screen."""
+        items = list(self.selection)
+        if not items or (dx == 0 and dy == 0):
+            return
+        try:
+            self.doc.move_items(items, dx, dy)
+        except Exception as exc:
+            self.error.emit(str(exc))
+            dx = dy = 0  # nothing moved
+        # Keep them selected so they can be dragged or nudged again.
+        again = [self._find_moved(item, dx, dy) for item in items]
+        self.select_items([it for it in again if it is not None])
+
+    def _find_moved(self, item: ImageInfo | TextBlock | Markup, dx: float, dy: float
+                    ) -> ImageInfo | TextBlock | Markup | None:
+        """The element again after the document changed, moved by (dx, dy) display points."""
+        if isinstance(item, Markup) and item.kind == "highlight":
+            dx = dy = 0  # highlights don't move
+        page = item.page
+        shown = self.doc.to_display(page, item.bbox)
+        center = self.doc.from_display(page, fitz.Point(
+            (shown.x0 + shown.x1) / 2 + dx, (shown.y0 + shown.y1) / 2 + dy))
+        if isinstance(item, TextBlock):
+            return self._block_at(page, center)
+        if isinstance(item, ImageInfo):
+            return next((im for im in self.doc.images(page)
+                         if im.xref == item.xref and center in im.bbox), None)
+        marks = [m for m in self.doc.markups(page) if m.kind == item.kind]
+        return next((m for m in marks if (m.xref, m.tag) == (item.xref, item.tag)
+                     and center in m.bbox), None) or min(
+            (m for m in marks if center in m.bbox), key=lambda m: m.bbox.get_area(), default=None)
 
     def move_selected_text(self, dx: float, dy: float) -> None:
         """Move the selected text box by (dx, dy) points as seen on screen."""
@@ -1020,7 +1287,7 @@ class PageView(QGraphicsView):
             self.error.emit(str(exc))
             return
         # Keep the moved box selected so it can be dragged or nudged again.
-        moved = self.doc.block_at(block.page, self.doc.from_display(block.page, target))
+        moved = self._block_at(block.page, self.doc.from_display(block.page, target))
         if moved is not None:
             self._select(moved)
         else:
@@ -1195,17 +1462,19 @@ class PageView(QGraphicsView):
             if event.key() == Qt.Key.Key_Escape:
                 self.cancel_placement()
                 return
-        if event.key() == Qt.Key.Key_Escape and self.selected is not None:
+        if event.key() == Qt.Key.Key_Escape and self.selection:
             self.clear_selection()
             return
         arrows = {
             Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0),
             Qt.Key.Key_Up: (0, -1), Qt.Key.Key_Down: (0, 1),
         }
-        if self.selected is not None and event.key() in arrows:
+        if self.selection and event.key() in arrows:
             step = 10 if event.modifiers() & Qt.KeyboardModifier.ShiftModifier else 1
             dx, dy = arrows[event.key()]
-            if self.selected_text is not None:
+            if len(self.selection) > 1:
+                self.move_selection(dx * step, dy * step)
+            elif self.selected_text is not None:
                 self.move_selected_text(dx * step, dy * step)
             elif self.selected_markup is not None:
                 self.move_selected_markup(dx * step, dy * step)
@@ -1488,13 +1757,16 @@ class PageView(QGraphicsView):
             self.placementChanged.emit(False)
 
     def delete_selected(self) -> bool:
-        """Delete the selected image, text box, highlight or box; False if nothing is selected."""
-        target = self.selected
-        if target is None:
+        """Delete the selected image, text box, highlight or box (or all of several);
+        False if nothing is selected."""
+        target, items = self.selected, list(self.selection)
+        if not items:
             return False
         self.clear_selection()
         try:
-            if isinstance(target, TextBlock):
+            if len(items) > 1:
+                self.doc.delete_items(items)
+            elif isinstance(target, TextBlock):
                 self.doc.delete_text_block(target)
             elif isinstance(target, Markup):
                 self.doc.delete_markup(target)
@@ -1553,7 +1825,7 @@ class PageView(QGraphicsView):
                          and abs(m.bbox.x0 - item.bbox.x0) < 0.5
                          and abs(m.bbox.y1 - item.bbox.y1) < 0.5), None)
         else:
-            again = self.doc.block_at(page, center)
+            again = self._block_at(page, center)
         if again is not None:
             self._select(again)
         else:
@@ -1568,7 +1840,7 @@ class PageView(QGraphicsView):
             target = self._selectable_at(hit[0], self.doc.from_display(*hit))
             if target is None:
                 self.clear_selection()
-            elif target != self.selected:
+            elif target not in self.selection:
                 self._select(target)
         self._hover.hide()
         self.setFocus()

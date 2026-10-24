@@ -151,23 +151,31 @@ MESSAGES: dict[str, str | tuple[str, ...]] = {
     "Delete page(s)": "Ta bort sidor",
 
     # ---- right-hand panel
-    "Click a text box, image, highlight or box to select it. Drag a text box or box to move "
-    "it, or nudge it with the arrow keys (Shift for bigger steps). Delete removes the "
-    "selection; right-click it for its layer. Drag thumbnails to reorder pages, or to another "
-    "Pixa window to copy them. Drop PDFs and images onto the pages or the thumbnails.":
-        "Klicka på en textruta, bild, färgmarkering eller ruta för att markera den. Dra en "
-        "textruta eller ruta för att flytta den, eller knuffa den med piltangenterna (Skift "
-        "för större steg). Delete tar bort det markerade; högerklicka för att ändra lager. "
+    "Click a line of text, image, highlight or box to select it. Shift-click to select more, "
+    "or drag across an empty spot to select everything there. Drag the selection to move it, "
+    "or nudge it with the arrow keys (Shift for bigger steps). Delete removes the selection; "
+    "right-click it for its layer. Drag thumbnails to reorder pages, or to another Pixa "
+    "window to copy them. Drop PDFs and images onto the pages or the thumbnails.":
+        "Klicka på en textrad, bild, färgmarkering eller ruta för att markera den. Skift-klicka "
+        "för att markera fler, eller dra över en tom yta för att markera allt där. Dra det "
+        "markerade för att flytta det, eller knuffa det med piltangenterna (Skift för större "
+        "steg). Delete tar bort det markerade; högerklicka för att ändra lager. "
         "Dra miniatyrerna för att ändra sidordningen, eller till ett annat Pixa-fönster för "
         "att kopiera dem. Släpp PDF:er och bilder på sidorna eller miniatyrerna.",
-    "Hover over text to see editable lines. Click a line to edit it. Enter saves, "
-    "Shift+Enter adds a line break, Esc cancels.":
+    "Hover over text to see editable lines. Click a line to edit it. Enter starts a new "
+    "line; click outside the text when you're done. Esc cancels.":
         "Håll pekaren över text för att se rader som går att redigera. Klicka på en rad för "
-        "att redigera den. Retur sparar, Skift+Retur lägger till en radbrytning, Esc avbryter.",
+        "att redigera den. Retur börjar en ny rad; klicka utanför texten när du är klar. "
+        "Esc avbryter.",
     "Click anywhere on a page to start typing. Choose the font, size and colour below. "
-    "Enter places the text.":
+    "Enter starts a new line; click outside the text to place it.":
         "Klicka var som helst på en sida för att börja skriva. Välj typsnitt, storlek och "
-        "färg nedan. Retur placerar texten.",
+        "färg nedan. Retur börjar en ny rad; klicka utanför texten för att placera den.",
+    "{n} item selected.": (
+        "{n} objekt markerat.",
+        "{n} objekt markerade. Dra ett av dem eller använd piltangenterna för att flytta dem "
+        "tillsammans; Delete tar bort dem.",
+    ),
     "Choose an image, then drag it into position and resize it from the corner handle "
     "(Shift for free resize). Enter places it.":
         "Välj en bild, dra den på plats och ändra storleken med hörnhandtaget (Skift för fri "
@@ -428,6 +436,8 @@ MESSAGES: dict[str, str | tuple[str, ...]] = {
     "undo|Add text": "lägg till text",
     "undo|Move text": "flytta text",
     "undo|Delete text": "ta bort text",
+    "undo|Move items": "flytta objekt",
+    "undo|Delete items": "ta bort objekt",
     "undo|Transform image": "ändra bild",
     "undo|Add image": "lägg till bild",
     "undo|Add images": "lägg till bilder",

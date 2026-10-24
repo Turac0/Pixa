@@ -1057,7 +1057,7 @@ class MainWindow(QMainWindow):
         menu.addActions(list(self.arrange_actions.values()))
         menu.addSeparator()
         delete = menu.addAction(tr("Delete"), self.view.delete_selected)
-        delete.setEnabled(self.view.selected is not None)
+        delete.setEnabled(bool(self.view.selection))
         if self.view.selected_image is not None:
             menu.addSeparator()
             menu.addAction(tr("Rotate image left"), lambda: self.view.rotate_selected_image(-90))

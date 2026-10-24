@@ -504,6 +504,7 @@ class PdfDocument:
         self._identity_cache: dict[tuple[int, str], DocFace] = {}
         self._face_by_font: dict[str, DocFace] = {}
         self._word_rows: tuple[tuple[int, int], list[tuple[int, list[fitz.Rect]]]] | None = None
+        self._editing = False  # inside an _edit, whose snapshot covers nested ones
 
     # ------------------------------------------------------------------ files
     @classmethod
@@ -592,12 +593,18 @@ class PdfDocument:
 
     @contextmanager
     def _edit(self, label: str):
+        if self._editing:  # part of a bigger change: that one is the undo step
+            yield
+            return
         snapshot = self.doc.tobytes()
+        self._editing = True
         try:
             yield
         except Exception:
             self._restore(snapshot)
             raise
+        finally:
+            self._editing = False
         self._undo.append((label, snapshot))
         del self._undo[:-MAX_HISTORY]
         self._redo.clear()
@@ -894,6 +901,10 @@ class PdfDocument:
     def text_lines(self, index: int) -> list[TextLine]:
         return [line for block in self.text_blocks(index) for line in block.lines]
 
+    def line_blocks(self, index: int) -> list[TextBlock]:
+        """Each text line as a text box of its own, the way the Select tool picks text."""
+        return [TextBlock(index, fitz.Rect(line.bbox), [line]) for line in self.text_lines(index)]
+
     def block_at(self, index: int, point: fitz.Point) -> TextBlock | None:
         """Text block at an unrotated page point (smallest match wins)."""
         hits = [b for b in self.text_blocks(index) if point in b.bbox]
@@ -1051,12 +1062,13 @@ class PdfDocument:
         style = style or line.style
         page = self.doc[line.page]
         note = None
+        rows = new_text.split("\n")
         with self._edit("Edit text"):
             writer = self._font_writer(page)
             font = None
             if new_text.strip():
                 # Resolve before redacting, which may drop the font from the page.
-                font = writer.prepare(line.font, line.style, style, new_text)
+                font = writer.prepare(line.font, line.style, style, "".join(rows))
             page.add_redact_annot(self._redaction_band(line))
             page.apply_redactions(
                 images=fitz.PDF_REDACT_IMAGE_NONE,
@@ -1067,9 +1079,22 @@ class PdfDocument:
                 return None
             writer.flush()
             note = font.note
-            font.write(page, line.origin, new_text, style.size, style.color, line.direction,
-                       self._rotate_for(line.direction))
-            self._redraw_decorations(page, line, style, font.text_length(new_text, style.size))
+            # Further rows go below the first, across the reading direction.
+            dx, dy = line.direction
+            down = fitz.Point(-dy, dx) * (1.25 * style.size)
+            for i, row in enumerate(rows):
+                if not row.strip():
+                    continue
+                origin = line.origin + down * i
+                font.write(page, origin, row, style.size, style.color, line.direction,
+                           self._rotate_for(line.direction))
+                length = font.text_length(row, style.size)
+                if i == 0:
+                    self._redraw_decorations(page, line, style, length)
+                elif style.underline:
+                    self._draw_decoration(page, origin, line.direction, 0, length,
+                                          0.12 * style.size, max(0.5, 0.06 * style.size),
+                                          style.color)
         return note
 
     def _redraw_decorations(self, page: fitz.Page, line: TextLine, style: TextStyle,
@@ -1139,6 +1164,45 @@ class PdfDocument:
     def delete_text_block(self, block: TextBlock) -> None:
         with self._edit("Delete text"):
             self._rewrite_block(self.doc[block.page], block, None)
+
+    def move_items(self, items: Sequence[ImageInfo | TextBlock | Markup],
+                   dx: float, dy: float) -> None:
+        """Move images, text boxes and boxes together by (dx, dy) display points,
+        as one undo step. Highlights stay with their text."""
+        with self._edit("Move items"):
+            # Images first: redacting text (to redraw it) renames their resources.
+            for image in (i for i in items if isinstance(i, ImageInfo)):
+                geo = self.image_geometry(image)
+                geo.center = fitz.Point(geo.center.x + dx, geo.center.y + dy)
+                self.transform_image(image, geo)
+            for box in (i for i in items if isinstance(i, Markup) and i.kind == "box"):
+                self.move_markup(box, dx, dy)
+            for block in self._text_per_page(items):
+                page = self.doc[block.page]
+                m = page.derotation_matrix
+                # All of a page's text at once, so text moved onto another
+                # selected line isn't erased when that one is taken away.
+                self._rewrite_block(page, block, fitz.Point(dx, dy) * m - fitz.Point(0, 0) * m)
+
+    def delete_items(self, items: Sequence[ImageInfo | TextBlock | Markup]) -> None:
+        """Delete several images, text boxes, highlights and boxes as one undo step."""
+        with self._edit("Delete items"):
+            for image in (i for i in items if isinstance(i, ImageInfo)):
+                self.delete_image(image)
+            for markup in (i for i in items if isinstance(i, Markup)):
+                self.delete_markup(markup)
+            for block in self._text_per_page(items):
+                self._rewrite_block(self.doc[block.page], block, None)
+
+    @staticmethod
+    def _text_per_page(items: Sequence[ImageInfo | TextBlock | Markup]) -> list[TextBlock]:
+        """The text boxes among ``items`` combined into one per page."""
+        pages: dict[int, TextBlock] = {}
+        for block in (i for i in items if isinstance(i, TextBlock)):
+            whole = pages.setdefault(block.page, TextBlock(block.page, fitz.Rect(block.bbox), []))
+            whole.bbox |= block.bbox
+            whole.lines += [ln for ln in block.lines if ln not in whole.lines]
+        return list(pages.values())
 
     def _rewrite_block(self, page: fitz.Page, block: TextBlock, delta: fitz.Point | None,
                        capture: bool = False) -> bytes | None:
@@ -1718,7 +1782,10 @@ class PdfDocument:
         if isinstance(item, Markup) and item.kind == "highlight":
             raise PdfError(tr("Highlights always lie on top of the page."))
         page = self.doc[item.page]
-        found = self._page_layers(page, self._content(page))[2]
+        # A line picked out of a paragraph is layered on its own.
+        lines = isinstance(item, TextBlock) and not any(
+            _same_element(b, item) for b in self.text_blocks(item.page))
+        found = self._page_layers(page, self._content(page), lines)[2]
         me = next((layer for layer in found if _same_element(layer.item, item)), None)
         if me is None and not (isinstance(item, Markup) and item.xref):
             raise PdfError(tr({
@@ -1742,7 +1809,7 @@ class PdfDocument:
             page = self.doc.reload_page(page)
             xref, data = self._merge_contents(page)
             page = self.doc.reload_page(page)
-            ops, final, found = self._page_layers(page, data)
+            ops, final, found = self._page_layers(page, data, lines)
             if anchor is None:
                 spot = layers.Spot(len(data), final) if how == "front" else \
                     layers.Spot(0, fitz.Identity)
@@ -1771,10 +1838,11 @@ class PdfDocument:
         self._set_contents(page, [xref])
         return xref, data
 
-    def _page_layers(self, page: fitz.Page, data: bytes
+    def _page_layers(self, page: fitz.Page, data: bytes, lines: bool = False
                      ) -> tuple[list[layers.Op], fitz.Matrix, list[_Layer]]:
-        """The content's operators and where the page's text boxes, images and
-        boxes are drawn in it (each element whose drawing code can be found)."""
+        """The content's operators and where the page's text boxes (with ``lines``:
+        text lines), images and boxes are drawn in it (each element whose drawing
+        code can be found)."""
         ops, final = layers.scan(data)
         index = page.number
         found: list[_Layer] = []
@@ -1793,7 +1861,7 @@ class PdfDocument:
             if box is not None:
                 found.append(_Layer(box, box.bbox, [], match.start(),
                                     (match.start(), match.end())))
-        blocks = self.text_blocks(index)
+        blocks = self.line_blocks(index) if lines else self.text_blocks(index)
         shown: dict[int, list[int]] = {}
         to_page = page.transformation_matrix
         for i, op in enumerate(ops):

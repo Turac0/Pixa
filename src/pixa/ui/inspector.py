@@ -32,16 +32,18 @@ WIDTH = 260  # the panel is wider only when its contents need it (longer transla
 FILL_SWATCHES = ["#ffffff", "#fff3b0", "#d7f5c8", "#cfe8ff", "#ffd6e7", "#e5e7eb"]
 
 HINTS = {
-    Tool.SELECT: N_("Click a text box, image, highlight or box to select it. Drag a text box "
-                    "or box to move it, or "
-                    "nudge it with the arrow keys (Shift for bigger steps). Delete removes the "
-                    "selection; right-click it for its layer. "
+    Tool.SELECT: N_("Click a line of text, image, highlight or box to select it. Shift-click "
+                    "to select more, or drag across an empty spot to select everything there. "
+                    "Drag the selection to move it, or nudge it with the arrow keys (Shift for "
+                    "bigger steps). Delete removes the selection; right-click it for its layer. "
                     "Drag thumbnails to reorder pages, or to another Pixa window to copy them. "
                     "Drop PDFs and images onto the pages or the thumbnails."),
     Tool.EDIT_TEXT: N_("Hover over text to see editable lines. Click a line to edit it. "
-                       "Enter saves, Shift+Enter adds a line break, Esc cancels."),
+                       "Enter starts a new line; click outside the text when you're done. "
+                       "Esc cancels."),
     Tool.ADD_TEXT: N_("Click anywhere on a page to start typing. Choose the font, size and "
-                      "colour below. Enter places the text."),
+                      "colour below. Enter starts a new line; click outside the text to "
+                      "place it."),
     Tool.ADD_IMAGE: N_("Choose an image, then drag it into position and resize it from the "
                        "corner handle (Shift for free resize). Enter places it."),
     Tool.HIGHLIGHT: N_("Drag across text to highlight it, like with a marker. Where there is no "
