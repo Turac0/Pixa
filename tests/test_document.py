@@ -1152,3 +1152,31 @@ def test_simple_font_with_two_byte_tounicode_survives_edits(tmp_path):
     line = pdf.text_lines(0)[0]
     assert line.font.endswith("UniversS-CondensedBold")
     assert line.spans[0].origin.x == pytest.approx(82, abs=0.5)
+
+
+def test_highlights_move_with_their_text(sample_pdf):
+    doc = PdfDocument.open(sample_pdf)
+    title, body = doc.text_lines(0)[:2]
+    # One highlight over both lines: only the part on the moved line goes along.
+    doc.add_highlight(0, [fitz.Rect(title.bbox), fitz.Rect(body.bbox)], (0, 1, 0))
+    (line,) = [b for b in doc.line_blocks(0) if b.text == "The quick brown fox"]
+    doc.move_text_block(line, 30, 40)
+    (mark,) = doc.markups(0)
+    assert mark.color == pytest.approx((0, 1, 0))
+    top, bottom = sorted(mark.rects, key=lambda r: r.y0)
+    assert tuple(top) == pytest.approx(tuple(title.bbox), abs=0.5)
+    assert tuple(bottom) == pytest.approx(tuple(body.bbox + (30, 40, 30, 40)), abs=0.5)
+    doc.undo()  # one step for both
+    (mark,) = doc.markups(0)
+    assert max(r.y1 for r in mark.rects) == pytest.approx(body.bbox.y1, abs=0.5)
+
+
+def test_moving_several_items_carries_highlights(sample_pdf):
+    doc = PdfDocument.open(sample_pdf)
+    body = doc.text_lines(0)[1]
+    doc.add_highlight(0, [fitz.Rect(body.bbox)], (1, 1, 0))
+    (mark,) = doc.markups(0)
+    (line,) = [b for b in doc.line_blocks(0) if b.text == "The quick brown fox"]
+    doc.move_items([line, mark], 0, 50)  # the highlight is selected too: moved once
+    (moved,) = doc.markups(0)
+    assert moved.bbox.y0 == pytest.approx(body.bbox.y0 + 50, abs=0.5)

@@ -788,6 +788,14 @@ class PageView(QGraphicsView):
                     self._pinch(factor, event.position())
             event.accept()
             return
+        pixels = event.pixelDelta()
+        if not pixels.isNull():
+            # Two-finger scrolling: Qt would only scroll along the main direction.
+            h, v = self.horizontalScrollBar(), self.verticalScrollBar()
+            h.setValue(h.value() - pixels.x())
+            v.setValue(v.value() - pixels.y())
+            event.accept()
+            return
         super().wheelEvent(event)
 
     def _gesture(self, event, receiver: QWidget) -> bool:
@@ -1006,13 +1014,19 @@ class PageView(QGraphicsView):
             *self._blocks(index), *self.doc.markups(index), *self.doc.images(index)]
         return [it for it in found if it.bbox.intersects(area)]
 
-    def _movable(self, target: ImageInfo | TextBlock | Markup | None) -> bool:
-        """Text boxes and boxes can be dragged with the click that selects them;
-        anything in a selection of several drags the whole selection."""
+    def _drag_items(self, target: ImageInfo | TextBlock | Markup | None, index: int,
+                    pt: fitz.Point) -> list[ImageInfo | TextBlock | Markup]:
+        """What dragging from ``target`` moves: a text box or box itself, the text
+        under a highlight (the highlight goes along), or anything in a selection
+        of several: the whole selection."""
         if len(self.selection) > 1 and target in self.selection:
-            return True
-        return isinstance(target, TextBlock) or (
-            isinstance(target, Markup) and target.kind == "box")
+            return list(self.selection)
+        if isinstance(target, TextBlock) or (isinstance(target, Markup) and target.kind == "box"):
+            return [target]
+        if isinstance(target, Markup):
+            text = self._block_at(index, pt)
+            return [text] if text is not None else []
+        return []
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
         if self._drag is not None:
@@ -1049,7 +1063,7 @@ class PageView(QGraphicsView):
             if target is not None and target not in self.selection:
                 rect = target.bbox
             self._set_cursor(
-                Qt.CursorShape.SizeAllCursor if self._movable(target)
+                Qt.CursorShape.SizeAllCursor if self._drag_items(target, index, pt)
                 else Qt.CursorShape.ArrowCursor
             )
         if rect is None:
@@ -1126,9 +1140,9 @@ class PageView(QGraphicsView):
             else:
                 if target not in self.selection or len(self.selection) < 2:
                     self._select(target)
-                if self._movable(target):
-                    self._drag = {"start": scene_pos, "items": list(self.selection),
-                                  "ghosts": None}
+                items = self._drag_items(target, index, pt)
+                if items:
+                    self._drag = {"start": scene_pos, "items": items, "ghosts": None}
             self._hover.hide()
             self.setFocus()
 
@@ -1234,16 +1248,18 @@ class PageView(QGraphicsView):
             self.scene().removeItem(ghost)
         offset = self.mapToScene(event.position().toPoint()) - drag["start"]
         dx, dy = offset.x() / self.zoom, offset.y() / self.zoom
-        if len(self.selection) > 1:
-            self.move_selection(dx, dy)
+        if drag["items"] != [self.selected]:  # several, or the text under a highlight
+            self.move_selection(dx, dy, drag["items"])
         elif self.selected_markup is not None:
             self.move_selected_markup(dx, dy)
         else:
             self.move_selected_text(dx, dy)
 
-    def move_selection(self, dx: float, dy: float) -> None:
-        """Move all selected elements by (dx, dy) points as seen on screen."""
-        items = list(self.selection)
+    def move_selection(self, dx: float, dy: float,
+                       items: list[ImageInfo | TextBlock | Markup] | None = None) -> None:
+        """Move all selected elements (or ``items``) by (dx, dy) points as seen on screen."""
+        selection = list(self.selection)
+        items = selection if items is None else items
         if not items or (dx == 0 and dy == 0):
             return
         try:
@@ -1252,14 +1268,24 @@ class PageView(QGraphicsView):
             self.error.emit(str(exc))
             dx = dy = 0  # nothing moved
         # Keep them selected so they can be dragged or nudged again.
-        again = [self._find_moved(item, dx, dy) for item in items]
+        again = [self._find_moved(item, dx, dy) for item in selection]
         self.select_items([it for it in again if it is not None])
+
+    def _find_moved_highlight(self, item: Markup, dx: float, dy: float) -> Markup | None:
+        shown = self.doc.to_display(item.page, item.bbox)
+        center = self.doc.from_display(item.page, fitz.Point(
+            (shown.x0 + shown.x1) / 2 + dx, (shown.y0 + shown.y1) / 2 + dy))
+        marks = [m for m in self.doc.markups(item.page)
+                 if m.kind == "highlight" and m.contains(center)]
+        return min(marks, key=lambda m: m.bbox.get_area(), default=None)
 
     def _find_moved(self, item: ImageInfo | TextBlock | Markup, dx: float, dy: float
                     ) -> ImageInfo | TextBlock | Markup | None:
         """The element again after the document changed, moved by (dx, dy) display points."""
         if isinstance(item, Markup) and item.kind == "highlight":
-            dx = dy = 0  # highlights don't move
+            # It moved if its text did; it is a new annotation then.
+            return self._find_moved_highlight(item, dx, dy) or \
+                self._find_moved_highlight(item, 0, 0)
         page = item.page
         shown = self.doc.to_display(page, item.bbox)
         center = self.doc.from_display(page, fitz.Point(

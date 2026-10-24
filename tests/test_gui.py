@@ -1214,3 +1214,41 @@ def test_touchpad_pinch_zooms_once_per_step(window, app):
     assert v.shown_zoom == pytest.approx(1.5)  # the view doesn't get it a second time
     QApplication.sendEvent(v.viewport(), gesture(Qt.NativeGestureType.EndNativeGesture, 0))
     assert v.zoom == pytest.approx(1.5) and v.transform().isIdentity()
+
+
+def test_dragging_highlighted_text_moves_text_and_highlight(window, app):
+    v = window.view
+    body = window.doc.text_lines(0)[1]
+    window.doc.add_highlight(0, [fitz.Rect(body.bbox)], (1, 1, 0))
+    window.set_tool(Tool.SELECT)
+    middle = ((body.bbox.x0 + body.bbox.x1) / 2, (body.bbox.y0 + body.bbox.y1) / 2)
+    click_page(window, 0, *middle)
+    pump(app)
+    assert v.selected_markup is not None  # a click still picks the highlight, to recolour it
+    start = _page_pos(v, 0, *middle)
+    _drag(v, start, start + QPoint(round(50 * v.zoom), round(80 * v.zoom)))
+    pump(app)
+    moved = next(ln for ln in window.doc.text_lines(0) if ln.text == "The quick brown fox")
+    assert moved.bbox.y0 == pytest.approx(body.bbox.y0 + 80, abs=2)
+    (mark,) = window.doc.markups(0)
+    assert mark.bbox.y0 == pytest.approx(body.bbox.y0 + 80, abs=2)
+    assert v.selected_markup is not None  # the highlight stays selected
+
+
+def test_two_finger_scrolling_moves_both_ways_at_once(window, app):
+    from PySide6.QtGui import QWheelEvent
+
+    v = window.view
+    v.set_zoom(3.0)
+    pump(app)
+    h, vert = v.horizontalScrollBar(), v.verticalScrollBar()
+    h.setValue(h.maximum() // 2)
+    vert.setValue(vert.maximum() // 2)
+    x, y = h.value(), vert.value()
+    pos = QPointF(200, 200)
+    wheel = QWheelEvent(pos, v.viewport().mapToGlobal(pos), QPoint(-30, -20), QPoint(-90, -60),
+                        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                        Qt.ScrollPhase.ScrollUpdate, False)
+    QApplication.sendEvent(v.viewport(), wheel)
+    pump(app)
+    assert (h.value(), vert.value()) == (x + 30, y + 20)

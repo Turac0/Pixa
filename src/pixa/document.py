@@ -1159,7 +1159,27 @@ class PdfDocument:
         m = page.derotation_matrix
         delta = fitz.Point(dx, dy) * m - fitz.Point(0, 0) * m
         with self._edit("Move text"):
+            self._carry_highlights(page, block, delta)
             self._rewrite_block(page, block, delta)
+
+    def _carry_highlights(self, page: fitz.Page, block: TextBlock, delta: fitz.Point) -> None:
+        """Move the parts of highlights that lie on a block's lines along with it
+        (``delta`` in unrotated page space)."""
+        def on_text(rect: fitz.Rect) -> bool:
+            area = rect.get_area()
+            return area > 0 and any(
+                (fitz.Rect(rect) & line.bbox).get_area() > area / 2 for line in block.lines)
+
+        for mark in self.markups(page.number):
+            if mark.kind != "highlight":
+                continue
+            moved = [on_text(r) for r in mark.rects]
+            if not any(moved):
+                continue
+            rects = [r + (delta.x, delta.y, delta.x, delta.y) if m else r
+                     for r, m in zip(mark.rects, moved, strict=True)]
+            page.delete_annot(page.load_annot(mark.xref))
+            self._highlight(page, rects, mark.color or (1.0, 0.92, 0.3))
 
     def delete_text_block(self, block: TextBlock) -> None:
         with self._edit("Delete text"):
@@ -1168,7 +1188,8 @@ class PdfDocument:
     def move_items(self, items: Sequence[ImageInfo | TextBlock | Markup],
                    dx: float, dy: float) -> None:
         """Move images, text boxes and boxes together by (dx, dy) display points,
-        as one undo step. Highlights stay with their text."""
+        as one undo step. Highlights on the text go along with it; selected or
+        not, they aren't moved on their own."""
         with self._edit("Move items"):
             # Images first: redacting text (to redraw it) renames their resources.
             for image in (i for i in items if isinstance(i, ImageInfo)):
@@ -1182,7 +1203,9 @@ class PdfDocument:
                 m = page.derotation_matrix
                 # All of a page's text at once, so text moved onto another
                 # selected line isn't erased when that one is taken away.
-                self._rewrite_block(page, block, fitz.Point(dx, dy) * m - fitz.Point(0, 0) * m)
+                delta = fitz.Point(dx, dy) * m - fitz.Point(0, 0) * m
+                self._carry_highlights(page, block, delta)
+                self._rewrite_block(page, block, delta)
 
     def delete_items(self, items: Sequence[ImageInfo | TextBlock | Markup]) -> None:
         """Delete several images, text boxes, highlights and boxes as one undo step."""

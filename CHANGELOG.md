@@ -11,6 +11,8 @@
 
 - **Zoom stays where you're looking.** Ctrl+scroll and pinching zoom towards the mouse pointer. The zoom buttons and shortcuts zoom towards the middle of the window instead of jumping to the top left.
 - **The Select tool picks single lines of text**, like the Edit text tool, instead of sometimes grabbing a whole block of text at once.
+- **Highlights move with their text.** When you move text, the highlight on it goes along, whether you drag the text itself, a selection that includes it, or the highlight (dragging highlighted text moves the text, while a click still selects the highlight so you can recolour or delete it).
+- **Scroll in any direction with two fingers.** On a touchpad the page now follows your fingers diagonally too, instead of only sideways or only up and down at a time.
 - **Enter starts a new line** when you add or edit text. Click outside the text when you're done (or press Ctrl+Enter, ⌘+Enter on a Mac); Esc still cancels.
 
 ## 0.5.3
